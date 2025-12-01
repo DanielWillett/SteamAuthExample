@@ -1,0 +1,84 @@
+﻿@page "/"
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using SteamOid2.API
+
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject ISteamOid2Client SteamOid2Client
+@inject NavigationManager NavigationManager
+@rendermode InteractiveServer
+
+<PageTitle>Single Sign-On - Final Project</PageTitle>
+
+@if (!_loaded)
+{
+    <div class="alert alert-secondary" role="alert">
+        Loading...
+    </div>
+}
+else if (!_steam64Id.HasValue)
+{
+    <div class="alert alert-primary" role="alert">
+        You are not logged in.
+    </div>
+    <img 
+        src="https://steamcdn-a.akamaihd.net/steamcommunity/public/images/steamworks_docs/english/sits_small.png"
+        class="img-fluid"
+        alt="Sign in through STEAM"
+        @onclick="HandleClickLogin"
+    />
+    @if (_redirError)
+    {
+        <p>Error redirecting</p>
+    }
+}
+else
+{
+    <div class="alert alert-success" role="alert">
+        You're logged in as user ID @(_steam64Id.Value.ToString("D17", CultureInfo.InvariantCulture)).
+    </div>
+    <a class="btn btn-danger" @onclick="HandleClickLogout">
+        Log Out
+    </a>
+}
+
+@code
+{
+    private ulong? _steam64Id;
+    private bool _loaded;
+    private bool _redirError;
+
+    /// <inheritdoc />
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        ulong id = (await ProtectedSessionStore.GetAsync<ulong>("SteamId")).Value;
+        _steam64Id = id == 0 ? null : id;
+        _loaded = true;
+        StateHasChanged();
+    }
+
+    private async Task HandleClickLogin()
+    {
+        (string realm, string callback) = SteamUrlUtility.ConstructUrls(new Uri(NavigationManager.Uri));
+
+        Uri loginUri = await SteamOid2Client.GetLoginUri(realm, callback);
+        if (loginUri == null)
+        {
+            _redirError = true;
+            StateHasChanged();
+            return;
+        }
+
+        NavigationManager.NavigateTo(loginUri.AbsoluteUri);
+    }
+
+    private async Task HandleClickLogout()
+    {
+        await ProtectedSessionStore.SetAsync("SteamId", 0ul);
+        _steam64Id = null;
+        StateHasChanged();
+    }
+}

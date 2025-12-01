@@ -1,0 +1,79 @@
+﻿@page "/auth/steam/callback"
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using SteamOid2.API
+
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject ISteamOid2Client SteamOid2Client
+@inject NavigationManager NavigationManager
+@inject HttpClient HttpClient
+@inject ILogger<SteamLoginVerification> Logger
+
+@rendermode InteractiveServer
+
+@if (_error != null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+@code
+{
+
+    private string? _error;
+
+    /// <inheritdoc />
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        _error = null;
+        try
+        {
+            Uri requestUrl = new Uri(NavigationManager.Uri);
+            (_, string callback) = SteamUrlUtility.ConstructUrls(requestUrl);
+
+            SteamOid2Response response = SteamOid2Client.ParseIdReponse(callback, requestUrl);
+
+            if (response.Status != Oid2Status.Success)
+            {
+                _error = $"Failed to parse response from Steam: {response.Status}.\nError: \"{response.Error}\".";
+                return;
+            }
+
+            Uri authUri = await SteamOid2Client.GetAuthorizeUri(requestUrl);
+
+            Logger.LogTrace("POST \e[36m{0}\e[0m", authUri.GetComponents(UriComponents.AbsoluteUri, UriFormat.Unescaped).Replace("?", Environment.NewLine + "?").Replace("&", Environment.NewLine + "&"));
+            HttpResponseMessage httpResponse = await HttpClient.PostAsync(authUri, content: null);
+
+            string steamReturnInfo = await httpResponse.Content.ReadAsStringAsync();
+            Logger.LogTrace("Response:\e[36m{0}\e[0m", Environment.NewLine + (steamReturnInfo.Contains('\r') ? steamReturnInfo : steamReturnInfo.Replace("\n", "\r\n")));
+
+            Oid2AuthenticationStatus status = SteamOid2Client.CheckAuthorizationResponse(steamReturnInfo, out _);
+            if (status != Oid2AuthenticationStatus.Valid)
+            {
+                _error = $"Failed to validate response from Steam: {status}.";
+            }
+
+            await ProtectedSessionStore.SetAsync("SteamId", response.Steam64);
+        }
+        catch (Exception ex)
+        {
+#if DEBUG
+            _error = ex.ToString();
+#else
+            _error = ex.GetType().Name;
+#endif
+        }
+        finally
+        {
+            if (_error != null)
+                StateHasChanged();
+        }
+
+        if (_error == null)
+        {
+            NavigationManager.NavigateTo("/");
+        }
+    }
+
+}
